@@ -3,13 +3,15 @@
 'response tracker' linking every evaluate run back to its group/trial."""
 from __future__ import annotations
 
+import csv
 import json
 import time
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-    QPushButton, QRadioButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 import results_store
@@ -100,9 +102,18 @@ class EvaluateTab(QWidget):
         self.results_table.setHorizontalHeaderLabels(["When", "Group", "Target", "N", "Accuracy", "Brier", "ECE", "Coverage @5% err"])
         self.results_table.itemDoubleClicked.connect(self._view_report)
         results_layout.addWidget(self.results_table)
+        results_btn_row = QHBoxLayout()
         refresh_results_btn = QPushButton("Refresh")
         refresh_results_btn.clicked.connect(self._refresh_results)
-        results_layout.addWidget(refresh_results_btn)
+        export_csv_btn = QPushButton("Export CSV…")
+        export_csv_btn.clicked.connect(self._export_csv)
+        export_md_btn = QPushButton("Export Markdown…")
+        export_md_btn.clicked.connect(self._export_markdown)
+        results_btn_row.addWidget(refresh_results_btn)
+        results_btn_row.addStretch()
+        results_btn_row.addWidget(export_csv_btn)
+        results_btn_row.addWidget(export_md_btn)
+        results_layout.addLayout(results_btn_row)
         layout.addWidget(results_box)
 
         compare_box = QGroupBox("Compare two runs (kev.compare)")
@@ -201,6 +212,61 @@ class EvaluateTab(QWidget):
         if not report_path.exists():
             return
         ReportDialog(json.loads(report_path.read_text()), self).exec()
+
+    _EXPORT_FIELDS = ["when", "group", "target", "data", "out_dir", "n", "accuracy", "brier", "ece", "coverage_at_5pct_error"]
+
+    def _export_rows(self) -> list[dict] | None:
+        entries = results_store.load()
+        if not entries:
+            QMessageBox.information(self, "Nothing to export", "No evaluation runs recorded yet.")
+            return None
+        rows = []
+        for e in entries:
+            row = dict(e)
+            row["when"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["timestamp"]))
+            rows.append(row)
+        return rows
+
+    def _export_csv(self) -> None:
+        rows = self._export_rows()
+        if rows is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export combined results as CSV", str(GROUPS_ROOT / "combined-results.csv"), "CSV (*.csv)")
+        if not path:
+            return
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=self._EXPORT_FIELDS)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({k: row.get(k) for k in self._EXPORT_FIELDS})
+        QMessageBox.information(self, "Exported", f"Wrote {len(rows)} row(s) to {path}")
+
+    def _export_markdown(self) -> None:
+        rows = self._export_rows()
+        if rows is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export combined results as Markdown", str(GROUPS_ROOT / "combined-results.md"), "Markdown (*.md)")
+        if not path:
+            return
+
+        def fmt(v):
+            return f"{v:.4f}" if isinstance(v, float) else ("?" if v is None else str(v))
+
+        lines = [
+            "# Kev evaluation results",
+            "",
+            f"Generated {time.strftime('%Y-%m-%d %H:%M:%S')} · {len(rows)} run(s)",
+            "",
+            "| When | Group | Target | N | Accuracy | Brier | ECE | Coverage @5% err |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for row in rows:
+            lines.append(
+                f"| {row['when']} | {row['group']} | {row['target']} | {fmt(row['n'])} | "
+                f"{fmt(row['accuracy'])} | {fmt(row['brier'])} | {fmt(row['ece'])} | {fmt(row['coverage_at_5pct_error'])} |"
+            )
+        Path(path).write_text("\n".join(lines) + "\n")
+        QMessageBox.information(self, "Exported", f"Wrote {len(rows)} row(s) to {path}")
 
     def _run_compare(self) -> None:
         candidate, reference = self.compare_a.currentData(), self.compare_b.currentData()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -14,7 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 import kev_ipc
-from paths import DATA_EXTENSIONS, GROUPS_ROOT, KEVCTL, KEV_ROOT, KEV_VENV_PY, SOURCES_FILE
+from paths import BACKUPS_ROOT, DATA_EXTENSIONS, GROUPS_ROOT, KEVCTL, KEV_ROOT, KEV_VENV_PY, SOURCES_FILE
+from runner import ProcessRunner
 
 GROUP_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -70,6 +72,26 @@ class GroupsTab(QWidget):
         buttons.addWidget(stage_btn)
         buttons.addWidget(refresh_btn)
         layout.addLayout(buttons)
+
+        backup_buttons = QHBoxLayout()
+        backup_label = QLabel("Backup / restore (whole group: workload, staged data, trials, eval results):")
+        backup_label.setProperty("role", "dim")
+        backup_group_btn = QPushButton("Backup Selected Group…")
+        backup_group_btn.clicked.connect(self._backup_group)
+        backup_all_btn = QPushButton("Backup All Groups…")
+        backup_all_btn.clicked.connect(self._backup_all)
+        restore_btn = QPushButton("Restore…")
+        restore_btn.clicked.connect(self._restore)
+        backup_buttons.addWidget(backup_label)
+        backup_buttons.addStretch()
+        backup_buttons.addWidget(backup_group_btn)
+        backup_buttons.addWidget(backup_all_btn)
+        backup_buttons.addWidget(restore_btn)
+        layout.addLayout(backup_buttons)
+
+        self.backup_runner = ProcessRunner()
+        self.backup_runner.console.setMaximumHeight(140)   # the tree is this tab's main content, not this log
+        layout.addWidget(self.backup_runner)
 
         self.refresh()
 
@@ -132,6 +154,54 @@ class GroupsTab(QWidget):
             QMessageBox.warning(self, "Some files were refused", "\n".join(errors))
         if staged:
             self.refresh()
+
+    def _backup_group(self) -> None:
+        group = self._group_of(self.tree.currentItem())
+        if not group:
+            QMessageBox.information(self, "Pick a group", "Select a group (or one of its rows) first.")
+            return
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        default = str(BACKUPS_ROOT / f"{group}-{stamp}.tar.gz")
+        path, _ = QFileDialog.getSaveFileName(self, f"Backup group '{group}'", default, "Archive (*.tar.gz)")
+        if not path:
+            return
+        self.backup_runner.run([KEV_VENV_PY, KEVCTL, "backup", "--group", group, "--out", path], cwd=KEV_ROOT)
+
+    def _backup_all(self) -> None:
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        default = str(BACKUPS_ROOT / f"all-groups-{stamp}.tar.gz")
+        path, _ = QFileDialog.getSaveFileName(self, "Backup all groups", default, "Archive (*.tar.gz)")
+        if not path:
+            return
+        self.backup_runner.run([KEV_VENV_PY, KEVCTL, "backup", "--out", path], cwd=KEV_ROOT)
+
+    def _restore(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Restore from backup", str(BACKUPS_ROOT), "Archive (*.tar.gz)")
+        if not path:
+            return
+        self._pending_restore_path = path
+        self.backup_runner.finished.connect(self._on_restore_finished)
+        self.backup_runner.run([KEV_VENV_PY, KEVCTL, "restore", "--in", path], cwd=KEV_ROOT)
+
+    def _on_restore_finished(self, code: int) -> None:
+        self.backup_runner.finished.disconnect(self._on_restore_finished)
+        if code == 0:
+            self.refresh()
+            return
+        # kevctl restore refuses to overwrite an existing group by default -- offer --force
+        # only after seeing that specific refusal, never silently.
+        if "already exists" not in self.backup_runner.console.toPlainText():
+            return
+        if QMessageBox.question(
+            self, "Group already exists",
+            "The backup's group already exists on disk. Overwrite it with the backup's contents?\n"
+            "This permanently discards whatever is currently there.",
+        ) == QMessageBox.Yes:
+            self.backup_runner.run(
+                [KEV_VENV_PY, KEVCTL, "restore", "--in", self._pending_restore_path, "--force"],
+                cwd=KEV_ROOT, force=True,
+            )
+            self.backup_runner.finished.connect(lambda code: self.refresh() if code == 0 else None)
 
     def _group_of(self, item: QTreeWidgetItem | None) -> str | None:
         while item is not None:

@@ -88,6 +88,36 @@ EOF
 chmod +x ~/.local/bin/kevgui
 ```
 
+## Backup & restore
+
+A group's directory (`workload.json`, staged data, trials, eval outputs) is the only copy
+of real work — training data brought in, compute spent training, results measured. Nothing
+here was backed up anywhere before this. Now, from the Groups tab:
+
+- **Backup Selected Group…** / **Backup All Groups…** — archives to a `.tar.gz` (`kevctl backup`
+  under the hood). Default location: `<kev-repo>/backups/`.
+- **Restore…** — extracts a backup back into `groups/`. Refuses to overwrite an existing
+  group; the GUI asks explicitly before it will, the CLI needs `--force`.
+
+Verified with a real disaster-recovery drill, not just a code read: backed up a group,
+deleted it from disk entirely, restored it, and confirmed everything (workload spec, staged
+data, the trained trial) came back byte-for-byte identical.
+
+The combined-results ledger (`gui/state/eval_runs.json`) now also:
+- writes atomically (temp file + rename), so a crash mid-write can't truncate it;
+- lock-guards every append, so two evaluation runs finishing close together — even from
+  separate processes — can't race and silently drop one entry (load-tested with 3 real
+  concurrent processes writing 150 entries; zero lost);
+- quarantines a corrupt ledger file on read instead of silently discarding it. Previously,
+  a corrupted ledger would go undetected until the next write silently overwrote it with a
+  fresh one-entry list — erasing every prior entry with no warning.
+
+## Exporting results
+
+The Evaluate tab's combined-results table has **Export CSV…** and **Export Markdown…**
+buttons — every recorded evaluation run (any group, any trial, baseline or fine-tuned),
+portable outside the GUI for a spreadsheet or a shared report.
+
 ## Known limitations
 
 Found by actually running the full workflow end to end against a real Hugging Face

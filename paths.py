@@ -6,6 +6,7 @@ KEV_ROOT = GUI_ROOT.parent
 KEV_VENV_PY = KEV_ROOT / ".venv" / "bin" / "python"
 KEVCTL = KEV_ROOT / "kevctl.py"
 GROUPS_ROOT = KEV_ROOT / "groups"
+BACKUPS_ROOT = KEV_ROOT / "backups"
 SKILL_SCRIPTS = KEV_ROOT / "skills" / "kev-finetune" / "scripts"
 ASSETS = KEV_ROOT / "skills" / "kev-finetune" / "assets"
 
