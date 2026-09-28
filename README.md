@@ -88,6 +88,25 @@ EOF
 chmod +x ~/.local/bin/kevgui
 ```
 
+## Known limitations
+
+Found by actually running the full workflow end to end against a real Hugging Face
+dataset, not just by reading the code:
+
+- **`kev.compare` doesn't work on this GUI's own output.** It crashes (`NaN` in its
+  "none of the above" diagnostic) when comparing two runs produced from a plain `--data`
+  file — which is every run the Evaluate tab produces. It expects Kev's own internal
+  `--suite` format, which carries synthetic `none_present`/`none_absent` variants this
+  GUI's data never has. Read the Combined Results table's two rows directly instead;
+  the Compare panel is left in for the day `kev.compare` supports `--data` vs `--data`,
+  and now says so on-screen.
+- **`kev.benchmark`'s default precision doesn't match `kev.serve`'s.** Scoring a
+  checkpoint whose `head.pt` doesn't record `weights_dtype` (true of the released
+  `jaredpalmer/kev-9b`) falls back to fp32 — roughly double the VRAM of `kev.serve`'s
+  own bf16 default, enough to OOM a 24GB card. The Evaluate tab now sets `KEV_DTYPE=bf16`
+  for local scoring to match; pass `--online`-style overrides yourself if you need the
+  literal fp32 reference numbers.
+
 ## Design notes
 
 - Every long-running action (train/serve/generate/evaluate/...) runs in a background

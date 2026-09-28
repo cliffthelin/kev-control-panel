@@ -111,6 +111,15 @@ class EvaluateTab(QWidget):
         self.compare_b = QComboBox()
         compare_form.addLayout(_row("Candidate:", self.compare_a))
         compare_form.addLayout(_row("Reference:", self.compare_b))
+        compare_note = QLabel(
+            "Known upstream limitation: kev.compare crashes (NaN in its \"none of the above\" "
+            "diagnostic) when both runs came from a plain --data file rather than Kev's own "
+            "--suite -- which is every run this GUI produces. Read the two runs' Combined "
+            "Results rows above directly instead of relying on Compare."
+        )
+        compare_note.setProperty("role", "warn")
+        compare_note.setWordWrap(True)
+        compare_form.addWidget(compare_note)
         compare_btn = QPushButton("Compare")
         compare_btn.clicked.connect(self._run_compare)
         compare_form.addWidget(compare_btn)
@@ -148,6 +157,12 @@ class EvaluateTab(QWidget):
             args.append("--date_facts")
         self._pending = {"group": group, "target": target, "data": self.data.text(), "out_dir": self.out.text()}
         env = {**OFFLINE_ENV, "CUDA_VISIBLE_DEVICES": str(self.gpu.value())}
+        if self.local_radio.isChecked():
+            # kev.benchmark's own default (LoadOptions.from_env with KEV_DTYPE unset) is fp32
+            # unless the checkpoint's own head.pt recorded otherwise -- ~36GB for a 9B model,
+            # which doesn't fit the P40. kev.serve sidesteps this by hardcoding bf16 itself;
+            # do the same here so scoring the plain released checkpoint doesn't OOM.
+            env["KEV_DTYPE"] = "bf16"
         self.runner.run(args, cwd=KEV_ROOT, env_overrides=env)
 
     def _on_eval_finished(self, code: int) -> None:
